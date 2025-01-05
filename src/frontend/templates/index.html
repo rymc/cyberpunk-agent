@@ -6,6 +6,15 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/main.css">
+    <style>
+        @keyframes valueUpdate {
+            0% { color: var(--agent-glow); text-shadow: 0 0 10px var(--agent-glow); }
+            100% { color: var(--agent-highlight); text-shadow: none; }
+        }
+        .value-update {
+            animation: valueUpdate 0.5s ease-out;
+        }
+    </style>
     <script>
         marked.setOptions({
             mangle: false,
@@ -23,7 +32,7 @@
             <div class="border border-agent-blue p-4 text-center relative overflow-hidden">
                 <h1 class="text-2xl text-agent-blue font-bold mb-2">AUTONOMOUS AGENT NETWORK</h1>
                 <div class="text-xs text-agent-blue opacity-70 flex items-center justify-center gap-4">
-                    <span>[NODES: 1,024 SYNCED]</span>
+                    <span>[NODES: <span data-metric="nodes">1,024/1,024 ACTIVE</span>]</span>
                     <span>[LEARNING: ENABLED]</span>
                     <span>[MODEL: klusterai/Meta-Llama-3.1-405B-Instruct-Turbo]</span>
                 </div>
@@ -58,15 +67,15 @@
                 <div class="text-agent-blue mt-1">
                     <div class="flex justify-between">
                         <span>NODES</span>
-                        <span class="text-agent-highlight">1,024/1,024 ACTIVE</span>
+                        <span class="text-agent-highlight" data-metric="nodes">1,024/1,024 ACTIVE</span>
                     </div>
                     <div class="flex justify-between">
                         <span>THROUGHPUT</span>
-                        <span class="text-agent-highlight">87% OPTIMAL</span>
+                        <span class="text-agent-highlight" data-metric="throughput">87% OPTIMAL</span>
                     </div>
                     <div class="flex justify-between">
                         <span>BLOCKS</span>
-                        <span class="text-agent-highlight">847,231</span>
+                        <span class="text-agent-highlight" data-metric="blocks">847,231</span>
                     </div>
                 </div>
             </div>
@@ -74,16 +83,16 @@
                 <div class="text-agent-blue opacity-70">AGENT METRICS</div>
                 <div class="text-agent-blue mt-1">
                     <div class="flex justify-between">
-                        <span>QUERIES</span>
-                        <span class="text-agent-highlight">2,847</span>
+                        <span>ACTIVE QUERIES</span>
+                        <span class="text-agent-highlight" data-metric="queries">2,847</span>
                     </div>
                     <div class="flex justify-between">
                         <span>ACCURACY</span>
-                        <span class="text-agent-highlight">99.7%</span>
+                        <span class="text-agent-highlight" data-metric="accuracy">99.7%</span>
                     </div>
                     <div class="flex justify-between">
                         <span>CONSENSUS</span>
-                        <span class="text-agent-highlight">98.2%</span>
+                        <span class="text-agent-highlight" data-metric="consensus">98.2%</span>
                     </div>
                 </div>
             </div>
@@ -97,6 +106,7 @@
             </div>
         </div>
     </div>
+    <script src="/static/css/main.css"></script>
     <script src="/static/js/chat.js"></script>
 </body>
 </html> 

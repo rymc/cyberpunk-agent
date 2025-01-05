@@ -8,6 +8,7 @@ class ChatInterface {
         this.messageCount = 0;
         this.connectWebSocket();
         this.setupEventListeners();
+        this.initializeMetricsUpdate();
     }
 
     connectWebSocket() {
@@ -39,13 +40,13 @@ class ChatInterface {
                     let message;
                     switch (data.tool_name) {
                         case 'web_search':
-                            message = `[NETGRID] >> Infiltrating global datastreams${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
+                            message = `[NETGRID] >> infiltrating global datastreams${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
                             break;
                         case 'parse_website':
-                            message = data.description || "[NETGRID] >> Establishing neural link...";
+                            message = data.description || "[NETGRID] >> establishing neural link...";
                             break;
                         default:
-                            message = data.description || `[NETGRID] >> Initializing ${data.tool_name} protocol...`;
+                            message = data.description || `[NETGRID] >> initializing ${data.tool_name} protocol...`;
                     }
                     this.updateLoadingStatus(message);
                     break;
@@ -67,11 +68,11 @@ class ChatInterface {
                     this.cancelButton.classList.add("hidden");
                     break;
                 default:
-                    console.warn("[ALERT] Unknown protocol detected:", data.type);
+                    console.warn("[ALERT] unknown protocol detected:", data.type);
             }
             this.scrollToBottom();
         } catch (error) {
-            console.error("[SYSTEM FAILURE] Protocol error:", error);
+            console.error("[SYSTEM FAILURE] protocol error:", error);
         }
     }
 
@@ -86,7 +87,7 @@ class ChatInterface {
             this.currentMsg.querySelector('.loading-status')?.remove();
             const cancelDiv = document.createElement("div");
             cancelDiv.className = "text-error-red text-sm mt-2";
-            cancelDiv.textContent = ">> Protocol execution terminated. Neural link severed.";
+            cancelDiv.textContent = ">> protocol execution terminated. neural link severed.";
             this.currentMsg.appendChild(cancelDiv);
             this.finalizeResponse();
         }
@@ -116,7 +117,7 @@ class ChatInterface {
     }
 
     showThinking() {
-        const loadingDiv = this.createLoadingElement("[NETGRID] >> Neural processors engaged. Synthesizing response...");
+        const loadingDiv = this.createLoadingElement("[NETGRID] >> neural processors engaged. synthesizing response...");
         this.currentMsg.appendChild(loadingDiv);
     }
 
@@ -168,14 +169,14 @@ class ChatInterface {
     }
 
     handleWebSocketError(error) {
-        console.error("[CRITICAL] Neural interface failure:", error);
-        this.showError(">> Neural interface disrupted. Critical systems compromised. Initiate manual refresh sequence.");
+        console.error("[CRITICAL] neural interface failure:", error);
+        this.showError(">> neural interface disrupted. critical systems compromised. initiate manual refresh sequence.");
         this.userInput.disabled = false;
     }
 
     handleWebSocketClose() {
-        console.log("[ALERT] Neural link terminated");
-        this.showError(">> Neural link terminated. Connection matrix destabilized. Initiate manual refresh sequence.");
+        console.log("[ALERT] neural link terminated");
+        this.showError(">> neural link terminated. connection matrix destabilized. initiate manual refresh sequence.");
         this.userInput.disabled = false;
     }
 
@@ -212,6 +213,81 @@ class ChatInterface {
     scrollToBottom() {
         const container = document.getElementById("messageContainer");
         container.scrollTop = container.scrollHeight;
+    }
+
+    initializeMetricsUpdate() {
+        // Initialize metrics with random ranges
+        this.metrics = {
+            nodes: { min: 980, max: 1024, current: 1024 },
+            throughput: { min: 82, max: 98, current: 87 },
+            blocks: { min: 847000, max: 848000, current: 847231 },
+            queries: { min: 2800, max: 3000, current: 2847 },
+            accuracy: { min: 99.2, max: 99.9, current: 99.7 },
+            consensus: { min: 97.8, max: 99.2, current: 98.2 }
+        };
+
+        // Start periodic updates
+        setInterval(() => this.updateMetrics(), 2000);
+    }
+
+    updateMetrics() {
+        // Update each metric with a new random value within its range
+        for (const [key, metric] of Object.entries(this.metrics)) {
+            const newValue = this.getNewMetricValue(metric);
+            metric.current = newValue;
+            
+            // Find and update all corresponding elements
+            const elements = document.querySelectorAll(`[data-metric="${key}"]`);
+            elements.forEach(element => {
+                let displayValue = newValue;
+                
+                // Format based on metric type
+                switch(key) {
+                    case 'nodes':
+                        element.textContent = `${displayValue}/1,024 ACTIVE`;
+                        break;
+                    case 'throughput':
+                        element.textContent = `${displayValue}% OPTIMAL`;
+                        break;
+                    case 'blocks':
+                        element.textContent = displayValue.toLocaleString();
+                        break;
+                    case 'queries':
+                        element.textContent = displayValue.toLocaleString();
+                        break;
+                    case 'accuracy':
+                    case 'consensus':
+                        element.textContent = `${displayValue}%`;
+                        break;
+                }
+                
+                // Add a brief highlight effect
+                element.classList.add('value-update');
+                setTimeout(() => element.classList.remove('value-update'), 500);
+            });
+        }
+    }
+
+    getNewMetricValue(metric) {
+        if (typeof metric.current === 'number') {
+            // Calculate a random change
+            const maxChange = (metric.max - metric.min) * 0.1;
+            const change = (Math.random() - 0.5) * maxChange;
+            
+            // Apply the change and ensure it stays within bounds
+            let newValue = metric.current + change;
+            newValue = Math.max(metric.min, Math.min(metric.max, newValue));
+            
+            // Round appropriately based on the current value's magnitude
+            if (newValue >= 1000) {
+                return Math.round(newValue);
+            } else if (newValue >= 100) {
+                return Math.round(newValue * 10) / 10;
+            } else {
+                return Math.round(newValue * 100) / 100;
+            }
+        }
+        return metric.current;
     }
 }
 
