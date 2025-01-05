@@ -39,14 +39,13 @@ class ChatInterface {
                     let message;
                     switch (data.tool_name) {
                         case 'web_search':
-                            message = `>> Scanning NetGrid for: "${data.args.query}"...`;
+                            message = `[NETGRID] >> Infiltrating global datastreams${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
                             break;
                         case 'parse_website':
-                            const url = new URL(data.args.url);
-                            message = `>> Establishing neural link with ${url.hostname}...`;
+                            message = data.description || "[NETGRID] >> Establishing neural link...";
                             break;
                         default:
-                            message = `>> Initializing ${data.tool_name} protocol...`;
+                            message = data.description || `[NETGRID] >> Initializing ${data.tool_name} protocol...`;
                     }
                     this.updateLoadingStatus(message);
                     break;
@@ -57,7 +56,6 @@ class ChatInterface {
                     this.updateCurrentResponse(data.content);
                     break;
                 case "tool_end":
-                    // Do nothing, wait for next status or content
                     break;
                 case "end_response":
                     if (this.currentMsg.querySelector('.loading-status')) {
@@ -118,7 +116,7 @@ class ChatInterface {
     }
 
     showThinking() {
-        const loadingDiv = this.createLoadingElement(">> Neural processors engaged. Synthesizing response...");
+        const loadingDiv = this.createLoadingElement("[NETGRID] >> Neural processors engaged. Synthesizing response...");
         this.currentMsg.appendChild(loadingDiv);
     }
 
@@ -139,7 +137,7 @@ class ChatInterface {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span>[NETGRID] ${text}</span>
+            <span>${text}</span>
         `;
         return loadingDiv;
     }
@@ -149,13 +147,11 @@ class ChatInterface {
             const existingContent = this.currentMsg.getAttribute('data-content') || '';
             const newContent = existingContent + content;
             
-            // Format the entire accumulated content
             const formattedContent = newContent
                 .replace(/\[(\d{2}:\d{2}:\d{2})\]/g, '<span class="text-terminal-blue">[$1]</span>')
                 .replace(/^(ERROR:)/gm, '<span class="text-red-500">$1</span>')
                 .replace(/^(WARNING:)/gm, '<span class="text-yellow-500">$1</span>')
                 .replace(/^(SUCCESS:)/gm, '<span class="text-green-500">$1</span>')
-                // Preserve consecutive newlines and add spacing
                 .replace(/\n\n/g, '<br><br>')
                 .replace(/\n/g, '<br>');
             

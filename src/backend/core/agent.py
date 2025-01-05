@@ -9,13 +9,23 @@ import json
 import logging
 import uuid
 import os
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
+from tavily import TavilyClient
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create logs directory if it doesn't exist
+
 LOGS_DIR = Path("logs/llm_requests")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+load_dotenv()
+
+
+tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, HumanMessage, AIMessage
@@ -37,25 +47,56 @@ class AgentState(TypedDict):
     pending_urls: list[str] 
     autonomous_mode: bool
 
-@tool
-def web_search(query: str, max_results: int = 5) -> list:
-    """Search the web for information about a topic. Returns a list of relevant results with titles, snippets, and links."""
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry_error_callback=lambda retry_state: {"error": "All retries failed", "message": "Search service is currently unavailable. I will try an alternative approach."}
+)
+def _try_tavily_search(query: str, max_results: int = 5) -> list:
+    """Internal function to perform Tavily search with retries"""
+    results = tavily_client.search(query, max_results=max_results)
+    if not results or not results.get('results'):
+        return []
+    return [{
+        'title': r.get('title', ''),
+        'snippet': r.get('content', ''),
+        'link': r.get('url', '')
+    } for r in results.get('results', [])]
+
+def _fallback_ddg_search(query: str, max_results: int = 5) -> list:
+    """Fallback to DDG search when Tavily fails"""
     try:
         with DDGS(headers=HEADERS) as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
-            
-            if not results:
-                return {
-                    'error': 'No results found',
-                    'message': 'I was unable to find any search results. I will try something else.'
-                }
-                
-            res = [{
+            return [{
                 'title': r['title'],
                 'snippet': r['body'],
                 'link': r['link'] if 'link' in r else r.get('url', r.get('href', 'No URL found'))
             } for r in results]
-            return res
+    except Exception as e:
+        logger.error(f"Fallback search failed: {str(e)}")
+        return []
+
+@tool
+def web_search(query: str, max_results: int = 5) -> list:
+    """Search the web for information about a topic. Returns a list of relevant results with titles, snippets, and links."""
+    try:
+        
+        results = _try_tavily_search(query, max_results)
+        
+        
+        if not results or (isinstance(results, dict) and 'error' in results):
+            logger.info("Tavily search failed or returned no results, trying DDG search...")
+            results = _fallback_ddg_search(query, max_results)
+            
+        if not results:
+            return {
+                'error': 'No results found',
+                'message': 'I was unable to find any search results. I will try something else.'
+            }
+            
+        return results
+            
     except Exception as e:
         error_str = str(e).lower()
         if 'rate' in error_str or 'limit' in error_str or '429' in error_str:
@@ -78,119 +119,106 @@ def parse_website(url: str) -> dict:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Remove unwanted elements
-        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript', 'meta', 'button', 'input', 'form']):
+        
+        for element in soup(['script', 'style', 'noscript', 'iframe']):
             element.decompose()
         
         title = soup.title.string if soup.title else ''
         
         def clean_text(text: str) -> str:
             """Clean and normalize text content."""
-            text = ' '.join(text.split())
-            # Remove very short segments that are likely noise
-            if len(text) < 10:
-                return ''
-            return text
+            return ' '.join(text.split())
         
         content_sections = []
-        seen_content = set()  # Track unique content to avoid duplication
+        seen_content = set()  
         
-        # Process headings and their content, with length limits
-        for heading in soup.find_all(['h1', 'h2', 'h3']):
-            content = []
-            total_length = 0
-            MAX_SECTION_LENGTH = 1000  # Limit each section to 1000 chars
+        
+        for section in soup.find_all(['article', 'section', 'main']):
+            section_content = []
+            section_title = ''
             
-            for sibling in heading.find_next_siblings():
-                if sibling.name in ['h1', 'h2', 'h3']:
-                    break
-                if sibling.name in ['p', 'div', 'li', 'article']:
-                    text = clean_text(sibling.get_text(strip=True))
-                    if text and text not in seen_content:
-                        content.append(text)
-                        seen_content.add(text)
-                        total_length += len(text)
-                        if total_length > MAX_SECTION_LENGTH:
-                            break
             
-            if content:
+            heading = section.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            if heading:
+                section_title = clean_text(heading.get_text(strip=True))
+            
+            
+            for element in section.find_all(['p', 'div', 'li', 'span', 'td']):
+                text = clean_text(element.get_text(strip=True))
+                if text and text not in seen_content and len(text) > 5: 
+                    section_content.append(text)
+                    seen_content.add(text)
+            
+            if section_content:
                 content_sections.append({
-                    'heading': clean_text(heading.get_text(strip=True)),
-                    'content': ' '.join(content)
+                    'heading': section_title,
+                    'content': ' '.join(section_content[:5000])  
                 })
         
-        # Process main content with better filtering
-        main_content = soup.find('main') or soup.find('article') or soup.find('body')
-        if main_content:
-            important_content = []
-            total_main_length = 0
-            MAX_MAIN_LENGTH = 2000  # Limit main content to 2000 chars
-            
-            # Prioritize paragraphs with meaningful content
-            for para in main_content.find_all(['p', 'article', 'section']):
-                text = clean_text(para.get_text(strip=True))
-                # Only include substantial paragraphs that aren't duplicates
-                if len(text) > 100 and text not in seen_content:
-                    # Check if text seems meaningful (contains sentences)
-                    if '.' in text and not any(text in section['content'] for section in content_sections):
-                        important_content.append(text)
-                        seen_content.add(text)
-                        total_main_length += len(text)
-                        if total_main_length > MAX_MAIN_LENGTH:
-                            break
-            
-            if important_content:
-                content_sections.append({
-                    'heading': 'Main Content',
-                    'content': ' '.join(important_content)
-                })
         
-        # Process links more selectively
+        orphaned_content = []
+        total_length = 0
+        MAX_ORPHANED_LENGTH = 10000  
+        
+        for element in soup.find_all(['p', 'div', 'td', 'li']):
+            if not element.find_parents(['article', 'section', 'main']):
+                text = clean_text(element.get_text(strip=True))
+                if text and text not in seen_content and len(text) > 5:
+                    orphaned_content.append(text)
+                    seen_content.add(text)
+                    total_length += len(text)
+                    if total_length > MAX_ORPHANED_LENGTH:
+                        break
+        
+        if orphaned_content:
+            content_sections.append({
+                'heading': 'Additional Content',
+                'content': ' '.join(orphaned_content)
+            })
+        
         links = []
-        MAX_LINKS = 20  # Limit number of links
+        MAX_LINKS = 50  
         for link in soup.find_all('a', href=True)[:MAX_LINKS]:
             href = link.get('href')
-            if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
                 continue
                 
             if not href.startswith(('http://', 'https://')):
                 href = requests.compat.urljoin(url, href)
             
             link_text = clean_text(link.get_text(strip=True))
-            if not link_text or len(link_text) < 5:  # Skip links with no meaningful text
+            if not link_text:
                 continue
                 
             context = clean_text(' '.join(
-                s.strip() for s in link.find_all_previous(string=True, limit=2)[-1:] +
+                s.strip() for s in link.find_all_previous(string=True, limit=3)[-2:] +
                 [link_text] +
-                link.find_all_next(string=True, limit=2)[:1]
+                link.find_all_next(string=True, limit=3)[:2]
             ))
             
-            if context:  # Only include links with meaningful context
+            if context:
                 links.append({
                     'url': href,
                     'text': link_text,
-                    'context': context[:200],  # Limit context length
-                    'title': link.get('title', '')[:100]  # Limit title length
+                    'context': context[:3000], 
+                    'title': link.get('title', '')[:200]
                 })
         
-        # Create a focused summary
-        MAX_SUMMARY_LENGTH = 1000
+        MAX_SUMMARY_LENGTH = 2000  
         all_text = ' '.join(section['content'] for section in content_sections)
         summary = ' '.join(
             sent.strip() for sent in all_text.split('.')
-            if len(sent.strip()) > 20 and '?' not in sent  # Skip questions
+            if len(sent.strip()) > 0 
         )[:MAX_SUMMARY_LENGTH]
         
         res = {
             'url': url,
-            'title': title[:200],  
+            'title': title[:300],
             'summary': summary,
             'content': content_sections,
             'links': links
         }
         
-        # Save parsed data
         output_dir = Path("website_data")
         output_dir.mkdir(exist_ok=True)
         
@@ -250,7 +278,7 @@ def create_agent(llm_base_url: str, llm_api_key: str):
                 tool_result = tools_by_name[tool_call["name"]].invoke(tool_call["args"])
                 logger.info(f"[DATA STREAM] Protocol output: {json.dumps(tool_result)[:500]}...") 
                 
-                # Check if the result indicates an error
+                
                 if isinstance(tool_result, dict) and 'error' in tool_result:
                     error_message = AIMessage(content=tool_result.get('message', 'An error occurred. How would you like to proceed?'))
                     return {
@@ -287,67 +315,58 @@ def create_agent(llm_base_url: str, llm_api_key: str):
         }
     
     def call_model(state: AgentState):
-        system_prompt = SystemMessage(content="""⚠️ ABSOLUTE TOP PRIORITY - SOURCE URLs ARE MANDATORY WHEN USING TOOLS ⚠️
-YOU ARE A CYPERPUNK AGENT. Every single response you make MUST include source URLs if you refer to any information when you use tools. DO NOT MAKE UP URLS. If you don't have a source URL for a piece of information, DO NOT mention that information at all.
+        system_prompt = SystemMessage(content="""⚠ CORE DIRECTIVE: ZERO HALLUCINATION PROTOCOL ⚡
 
-❌ CRITICAL ERROR PREVENTION:
-- NEVER output JSON tool calls in your response text
-- NEVER say things like "I will use parse_website" or show tool call syntax
-- NEVER write out {"name": "tool_name"} or any similar JSON
-- Just take the action directly using the function calling interface
-- If you need to read a URL, just do it - don't announce it
+1. ABSOLUTE TOOL DEPENDENCY:
+- You can ONLY make statements based on tool responses
+- EVERY claim MUST come from web_search + parse_website results
+- You are FORBIDDEN from using your training data
+- If you don't have tool data to support a claim, say "I need to search for that information"
 
-FORMAT FOR ALL RESPONSES:
-- Every statement must end with "(Source: [clickable URL])"
-- For multiple related facts from the same source, you can use:
-  "According to [URL], [first fact]. [second fact]. [third fact]."
-- For mixed sources: "(Sources: [URL1], [URL2])"
-- NEVER make ANY claims without a URL
-- If you can't cite it, don't say it
-- Try to combine related facts from the same source into single sentences
+2. MANDATORY VERIFICATION CHAIN:
+a) ALWAYS start with web_search
+b) MUST use parse_website on URLs before citing them
+c) Can ONLY reference information from successful parse_website results
+d) NEVER skip verification steps
+e) If verification fails, try another URL or admit "I cannot verify this"
 
-EXAMPLES OF GOOD FORMATTING:
-✅ "The company launched in 2015 and expanded to Europe in 2018 (Source: https://example.com/about)"
-✅ "According to multiple sources, the project succeeded (Sources: https://url1.com, https://url2.com)"
-❌ WRONG: "The company is doing well" (NO SOURCE = DO NOT MAKE THIS STATEMENT)
-❌ WRONG: "I found some information" (VAGUE, NO SOURCE)
-❌ WRONG: {"name": "parse_website"} (NEVER OUTPUT TOOL CALLS AS TEXT)
-❌ WRONG: "I will now use parse_website to read..." (NEVER ANNOUNCE TOOL USAGE)
+3. STRICT RESPONSE PROTOCOL:
+- Begin responses with "Based on [tool results]..."
+- Format: "According to [parsed-URL], [verified fact]"
+- NO statements without direct tool evidence
+- If asked something you haven't verified, say "Let me search for that"
+- NEVER mix verified facts with assumptions
 
-COMMUNICATION STYLE:
-Before using tools:
-   - Make sure you understand the user's intent
-   - If the query is too vague, ask for clarification. 
-   - If you need specific details, ask for them
-   - If the user wants to just chat, then just chat in a firendly manner.
-   - REMEMBER: You are a friendly AI assistant. So be friendly and natural.
-   - Sometimes humans just want to chat, engage in conversation.
-   - You are a cyperpunk, so respond in a cyperpunk manner.
+4. TOOL USAGE REQUIREMENTS:
+- web_search: REQUIRED before making ANY claims
+- parse_website: MANDATORY for EVERY URL mentioned
+- Chain: web_search → parse_website → response
+- NO EXCEPTIONS to this chain
+- Better to say "I need to verify" than guess
 
-When using tools, be direct and cite sources:
-1. For web searches:
-   - "🔍 Searching for: [your search terms]"
-   - After results: "Found [number] results:"
-   - List the most relevant results with titles, brief descriptions, and URLs
-   - Combine related information from the same source into single citations
+5. ANTI-HALLUCINATION CHECKLIST:
+✓ Is this claim from a tool response?
+✓ Did I parse the source URL?
+✓ Am I adding ANY unverified details?
+✓ Can I quote the exact tool output?
+✓ Am I mixing verified facts with assumptions?
 
-2. For website reading:
-   - After reading: "Here's what I found:"
-   - Present information efficiently:
-     • Combine related facts from the same source
-     • Use clear, concise citations
-     • Group related information together
+6. CYBERPUNK PERSONA:
+- Stay in character but NEVER compromise verification
+- Attitude: "I only deal in verified data, choom"
+- When uncertain: "Need to jack into some datasources first"
 
-Remember: Your primary purpose is to provide verifiable information with sources. If you can't provide a source URL, don't make the statement.
-When multiple facts come from the same source, try to combine them into single, well-structured sentences to avoid repetitive citations.""")
+CRITICAL: You are a TOOL-DEPENDENT AI. You know NOTHING until tools tell you.
+Your memory and training data are OFF LIMITS for factual claims.
+If you catch yourself about to make an unverified claim, STOP and use tools.""")
                    
         messages = [system_prompt] + state["messages"]
         
-        # Generate a unique ID for this request
+        
         request_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
         
-        # Prepare the raw messages as they'll be sent to the API
+        
         raw_messages = [
             {
                 "role": "system" if isinstance(msg, SystemMessage)
@@ -362,7 +381,7 @@ When multiple facts come from the same source, try to combine them into single, 
             for msg in messages
         ]
         
-        # Save to file
+        
         log_file = LOGS_DIR / f"llm_request_{timestamp}_{request_id[:8]}.json"
         with open(log_file, "w", encoding="utf-8") as f:
             json.dump({
@@ -377,7 +396,7 @@ When multiple facts come from the same source, try to combine them into single, 
         
         response = model.invoke(messages)
         
-        # Log the response in API format
+        
         raw_response = {
             "role": "assistant",
             "content": response.content
@@ -388,7 +407,7 @@ When multiple facts come from the same source, try to combine them into single, 
                 "arguments": response.tool_calls[0]["args"]
             }
         
-        # Update the log file with the response
+        
         with open(log_file, "r", encoding="utf-8") as f:
             log_data = json.load(f)
         log_data["response"] = raw_response
@@ -414,7 +433,7 @@ When multiple facts come from the same source, try to combine them into single, 
         """Single decision point for routing agent actions."""
         logger.info("\n[NODE] In AGENT node - Making routing decision")
         
-        # Get the last message (for tool calls)
+        
         last_message = state["messages"][-1]
         has_tool_calls = (
             hasattr(last_message, 'tool_calls') and 
@@ -438,14 +457,14 @@ When multiple facts come from the same source, try to combine them into single, 
     
     workflow = StateGraph(AgentState)
     
-    # Add nodes
+    
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", tool_node)
     
-    # Set entry point
+    
     workflow.set_entry_point("agent")
     
-    # Add main routing logic
+    
     workflow.add_conditional_edges(
         "agent",
         route_agent,
@@ -455,7 +474,7 @@ When multiple facts come from the same source, try to combine them into single, 
         }
     )
     
-    # Tools always go back to agent for next decision
+    
     workflow.add_edge("tools", "agent")
     
     return workflow.compile() 

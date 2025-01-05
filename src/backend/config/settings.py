@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     llm_base_url: str
     llm_api_key: str
     
+    # Search Configuration
+    tavily_api_key: str
+    
     # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8000

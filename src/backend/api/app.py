@@ -96,11 +96,9 @@ async def health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Handle WebSocket connections for the chat interface."""
     await websocket.accept()
     
     try:
-        # Get client IP for rate limiting
         client = websocket.client.host
         conversation_history: List[BaseMessage] = []
         
@@ -111,7 +109,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         
         while True:
             try:
-                # Check rate limit
                 if rate_limiter.is_rate_limited(client):
                     await websocket.send_json({
                         "type": "error",
@@ -121,11 +118,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 
                 message = await websocket.receive_text()
                 
-                # Basic input validation
                 if not message or len(message.strip()) == 0:
                     continue
                 
-                if len(message) > 1000:  # Arbitrary limit
+                if len(message) > 1000:
                     await websocket.send_json({
                         "type": "error",
                         "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] Message too long. Please keep messages under 1000 characters."
@@ -152,33 +148,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 tool_name = message_chunk.name
                                 try:
                                     tool_args = json.loads(message_chunk.content)
-                                    if tool_name == "web_search" and "query" in tool_args:
-                                        query = tool_args["query"][:30]
-                                        if len(tool_args["query"]) > 30:
-                                            query += "..."
-                                        desc = f"Searching: {query}"
+                                    if tool_name == "web_search":
+                                        query = tool_args.get("query", "")
+                                        if query:
+                                            query = query[:30]
+                                            if len(tool_args["query"]) > 30:
+                                                query += "..."
+                                            desc = f"[NETGRID] >> Infiltrating global datastreams for: {query}"
+                                        else:
+                                            desc = "[NETGRID] >> Breaching global information networks..."
                                     elif tool_name == "parse_website" and "url" in tool_args:
                                         from urllib.parse import urlparse
                                         domain = urlparse(tool_args["url"]).netloc
-                                        desc = f"Reading: {domain}"
+                                        desc = f"[NETGRID] >> Establishing neural link with {domain}..."
                                     else:
-                                        desc = f"Using {tool_name}"
-                                except:
-                                    desc = f"Using {tool_name}"
+                                        desc = f"[NETGRID] >> Initializing {tool_name} protocol..."
+                                except Exception as e:
+                                    desc = f"[NETGRID] >> Initializing {tool_name} protocol..."
                                 
                                 await websocket.send_json({
                                     "type": "tool_start",
                                     "tool_name": tool_name,
-                                    "args": tool_args
+                                    "args": tool_args,
+                                    "description": desc
                                 })
-                                is_first_chunk = True  # Reset for next message
+                                is_first_chunk = True
                             elif message_chunk.content:
                                 chunk_content = message_chunk.content
                                 
-                                # Add newlines for new messages
                                 if is_first_chunk:
                                     if assistant_response:
-                                        # Only add newlines between messages, not at the start
                                         chunk_content = f"\n\n{chunk_content}"
                                     is_first_chunk = False
                                 
@@ -198,21 +197,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         conversation_history.append(HumanMessage(content=assistant_response))
                 
                 except Exception as e:
-                    logger.error(f"Error processing message: {str(e)}", exc_info=True)
                     await websocket.send_json({
                         "type": "error",
                         "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred while processing your message. Please try again."
                     })
             
             except Exception as e:
-                logger.error(f"Error in message loop: {str(e)}", exc_info=True)
                 await websocket.send_json({
                     "type": "error",
                     "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred. Please try again."
                 })
     
     except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
         try:
             await websocket.close()
         except:
