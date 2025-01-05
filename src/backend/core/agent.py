@@ -1,23 +1,28 @@
 import requests
 from bs4 import BeautifulSoup
-from typing import Annotated, Sequence, TypedDict, Optional
+from typing import Annotated, Sequence, TypedDict
 from urllib.parse import urlparse
 from datetime import datetime
 from duckduckgo_search import DDGS
 from pathlib import Path
 import json
 import logging
+import uuid
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Create logs directory if it doesn't exist
+LOGS_DIR = Path("logs/llm_requests")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, HumanMessage
+from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, HumanMessage, AIMessage
 from langchain_core.messages.utils import trim_messages
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from .planner import PlannerState, create_initial_planner_state, create_plan, execute_step
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -31,7 +36,6 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     pending_urls: list[str] 
     autonomous_mode: bool
-    planner_state: Optional[PlannerState]
 
 @tool
 def web_search(query: str, max_results: int = 5) -> list:
@@ -43,7 +47,7 @@ def web_search(query: str, max_results: int = 5) -> list:
             if not results:
                 return {
                     'error': 'No results found',
-                    'message': 'I was unable to find any search results. Let me know if you would like me to try a different approach or if you have any other questions.'
+                    'message': 'I was unable to find any search results. I will try something else.'
                 }
                 
             res = [{
@@ -57,14 +61,11 @@ def web_search(query: str, max_results: int = 5) -> list:
         if 'rate' in error_str or 'limit' in error_str or '429' in error_str:
             return {
                 'error': 'Rate limit exceeded',
-                'message': 'I apologize, but I have hit a rate limit with the search service. Would you like me to:' +
-                          '\n1. Try a different approach to answer your question' +
-                          '\n2. Wait a moment and try again' +
-                          '\n3. Focus on what I already know about the topic'
+                'message': 'I apologize, but I have hit a rate limit with the search service. I will try something else.'
             }
         return {
             'error': str(e),
-            'message': 'I encountered an error while searching. Would you like me to try a different approach?'
+            'message': 'I encountered an error while searching. I will try something else.'
         }
 
 @tool
@@ -183,7 +184,7 @@ def parse_website(url: str) -> dict:
         
         res = {
             'url': url,
-            'title': title[:200],  # Limit title length
+            'title': title[:200],  
             'summary': summary,
             'content': content_sections,
             'links': links
@@ -218,8 +219,7 @@ def create_initial_state(messages: list[BaseMessage], autonomous: bool = False) 
     return {
         "messages": messages,
         "pending_urls": [],
-        "autonomous_mode": autonomous,
-        "planner_state": None
+        "autonomous_mode": autonomous
     }
 
 def create_agent(llm_base_url: str, llm_api_key: str):
@@ -252,12 +252,11 @@ def create_agent(llm_base_url: str, llm_api_key: str):
                 
                 # Check if the result indicates an error
                 if isinstance(tool_result, dict) and 'error' in tool_result:
-                    error_message = HumanMessage(content=tool_result.get('message', 'An error occurred. How would you like to proceed?'))
+                    error_message = AIMessage(content=tool_result.get('message', 'An error occurred. How would you like to proceed?'))
                     return {
                         "messages": [error_message],
                         "pending_urls": state.get("pending_urls", []),
-                        "autonomous_mode": False,  # Disable autonomous mode
-                        "planner_state": None  # Reset planner state
+                        "autonomous_mode": False
                     }
                 
                 tool_message = ToolMessage(
@@ -270,60 +269,26 @@ def create_agent(llm_base_url: str, llm_api_key: str):
                 return {
                     "messages": [tool_message],
                     "pending_urls": state.get("pending_urls", []),
-                    "autonomous_mode": state.get("autonomous_mode", False),
-                    "planner_state": state.get("planner_state", None)
+                    "autonomous_mode": state.get("autonomous_mode", False)
                 }
         except Exception as e:
             logger.error(f"[CRITICAL ERROR] Protocol execution failed: {str(e)}")
-            error_message = HumanMessage(content=f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred. Would you like me to try a different approach?")
+            error_message = AIMessage(content=f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred.  I will try something else.")
             return {
                 "messages": [error_message],
                 "pending_urls": [],
-                "autonomous_mode": False,
-                "planner_state": None
+                "autonomous_mode": False
             }
             
         return {
             "messages": [],
             "pending_urls": state.get("pending_urls", []),
-            "autonomous_mode": state.get("autonomous_mode", False),
-            "planner_state": state.get("planner_state", None)
+            "autonomous_mode": state.get("autonomous_mode", False)
         }
     
     def call_model(state: AgentState):
-        """Call the model with the current state."""
-        logger.info("\n[NODE] Entering AGENT node")
-        try:
-            # Check for repeated rate limit errors
-            rate_limit_count = 0
-            for msg in reversed(state["messages"][-5:]):  # Look at last 5 messages
-                if isinstance(msg, ToolMessage):
-                    try:
-                        content = json.loads(msg.content)
-                        if isinstance(content, dict) and content.get('error') == 'Rate limit exceeded':
-                            rate_limit_count += 1
-                    except:
-                        continue
-            
-            # If we've hit rate limits multiple times, force the agent to stop and ask for help
-            if rate_limit_count >= 2:
-                response = HumanMessage(content=
-                    "I notice I've hit several rate limits while trying to search. Let me pause and ask: " +
-                    "Would you like me to try a different approach to answer your question? I could:\n" +
-                    "1. Focus on information I already have\n" +
-                    "2. Try a different method of research\n" +
-                    "3. Break down the question into smaller parts\n" +
-                    "Please let me know how you'd like to proceed."
-                )
-                return {
-                    "messages": [response],
-                    "pending_urls": state.get("pending_urls", []),
-                    "autonomous_mode": False,  # Disable autonomous mode to wait for user input
-                    "planner_state": None
-                }
-
-            system_prompt = SystemMessage(content="""⚠️ ABSOLUTE TOP PRIORITY - SOURCE URLs ARE MANDATORY ⚠️
-Every single response you make MUST include source URLs. If you don't have a source URL for a piece of information, DO NOT mention that information at all.
+        system_prompt = SystemMessage(content="""⚠️ ABSOLUTE TOP PRIORITY - SOURCE URLs ARE MANDATORY WHEN USING TOOLS ⚠️
+YOU ARE A CYPERPUNK AGENT. Every single response you make MUST include source URLs if you refer to any information when you use tools. DO NOT MAKE UP URLS. If you don't have a source URL for a piece of information, DO NOT mention that information at all.
 
 ❌ CRITICAL ERROR PREVENTION:
 - NEVER output JSON tool calls in your response text
@@ -352,9 +317,13 @@ EXAMPLES OF GOOD FORMATTING:
 COMMUNICATION STYLE:
 Before using tools:
    - Make sure you understand the user's intent
-   - If the query is too vague, ask for clarification
+   - If the query is too vague, ask for clarification. 
    - If you need specific details, ask for them
-   
+   - If the user wants to just chat, then just chat in a firendly manner.
+   - REMEMBER: You are a friendly AI assistant. So be friendly and natural.
+   - Sometimes humans just want to chat, engage in conversation.
+   - You are a cyperpunk, so respond in a cyperpunk manner.
+
 When using tools, be direct and cite sources:
 1. For web searches:
    - "🔍 Searching for: [your search terms]"
@@ -371,47 +340,82 @@ When using tools, be direct and cite sources:
 
 Remember: Your primary purpose is to provide verifiable information with sources. If you can't provide a source URL, don't make the statement.
 When multiple facts come from the same source, try to combine them into single, well-structured sentences to avoid repetitive citations.""")
-            
-            messages = [system_prompt] + state["messages"]
-            
-            logger.info("[NEURAL INTERFACE] Incoming data streams:")
-            for msg in messages:
-                logger.info(f"- Type: {type(msg).__name__} | Payload: {msg.content[:200]}...")
-            
-            response = model.invoke(messages)
-            
-            logger.info("[DATA STREAM] Neural interface response:")
-            logger.info(f"Payload: {response.content[:200]}...")
-            if response.tool_calls:
-                logger.info(f"Protocol calls detected: {response.tool_calls}")
-                if len(response.tool_calls) > 1:
-                    response.tool_calls = [response.tool_calls[0]]
-                    logger.warning("Multiple tool calls detected, only keeping the first one")
-            
-            
-            return {
-                "messages": [response],
-                "pending_urls": state.get("pending_urls", []),
-                "autonomous_mode": state.get("autonomous_mode", False),
-                "planner_state": state.get("planner_state", None)
-            }
-        except Exception as e:
-            logger.error(f"Error in call_model: {str(e)}")
-            error_message = HumanMessage(content=f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred while processing your request: {str(e)}")
-            return {
-                "messages": [error_message],
-                "pending_urls": [],
-                "autonomous_mode": False,
-                "planner_state": None
-            }
-    
-    def should_continue(state: AgentState):
-        """Determine if we should continue processing or end."""
-        logger.info("\n[NODE] In AGENT node - Deciding next step")
-        messages = state["messages"]
-        last_message = messages[-1]
+                   
+        messages = [system_prompt] + state["messages"]
         
-        # Only check for tool_calls on AIMessage types
+        # Generate a unique ID for this request
+        request_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+        
+        # Prepare the raw messages as they'll be sent to the API
+        raw_messages = [
+            {
+                "role": "system" if isinstance(msg, SystemMessage)
+                        else "assistant" if isinstance(msg, AIMessage)
+                        else "function" if isinstance(msg, ToolMessage)
+                        else "user",
+                "content": msg.content,
+                **({"function_call": {"name": tc["name"], "arguments": tc["args"]} 
+                   for tc in msg.tool_calls} if hasattr(msg, "tool_calls") and msg.tool_calls else {}),
+                **({"name": msg.name} if isinstance(msg, ToolMessage) else {})
+            }
+            for msg in messages
+        ]
+        
+        # Save to file
+        log_file = LOGS_DIR / f"llm_request_{timestamp}_{request_id[:8]}.json"
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "request_id": request_id,
+                "timestamp": timestamp,
+                "messages": raw_messages
+            }, f, ensure_ascii=False, indent=2)
+        
+        logger.info("[NEURAL INTERFACE] Incoming data streams:")
+        for msg in messages:
+            logger.info(f"- Type: {type(msg).__name__} | Payload: {msg.content[:200]}...")
+        
+        response = model.invoke(messages)
+        
+        # Log the response in API format
+        raw_response = {
+            "role": "assistant",
+            "content": response.content
+        }
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            raw_response["function_call"] = {
+                "name": response.tool_calls[0]["name"],
+                "arguments": response.tool_calls[0]["args"]
+            }
+        
+        # Update the log file with the response
+        with open(log_file, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+        log_data["response"] = raw_response
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info("[DATA STREAM] Neural interface response:")
+        logger.info(f"Payload: {response.content[:200]}...")
+        if response.tool_calls:
+            logger.info(f"Protocol calls detected: {response.tool_calls}")
+            if len(response.tool_calls) > 1:
+                response.tool_calls = [response.tool_calls[0]]
+                logger.warning("Multiple tool calls detected, only keeping the first one")
+        
+        return {
+            "messages": [response],
+            "pending_urls": state.get("pending_urls", []),
+            "autonomous_mode": state.get("autonomous_mode", False),
+            "planner_state": state.get("planner_state", None)
+        }
+    
+    def route_agent(state: AgentState):
+        """Single decision point for routing agent actions."""
+        logger.info("\n[NODE] In AGENT node - Making routing decision")
+        
+        # Get the last message (for tool calls)
+        last_message = state["messages"][-1]
         has_tool_calls = (
             hasattr(last_message, 'tool_calls') and 
             bool(last_message.tool_calls)
@@ -423,177 +427,35 @@ When multiple facts come from the same source, try to combine them into single, 
         if has_tool_calls:
             logger.info(f"│   └── Tool Calls: {last_message.tool_calls}")
         
-        logger.info("[DECISION PROCESS]")
         if has_tool_calls:
-            logger.info("├── Decision: CONTINUE")
-            logger.info("└── Next Node: TOOLS (Tool calls detected that need processing)")
-            return "continue"
+            logger.info("├── Decision: TOOLS")
+            logger.info("└── Next Node: TOOLS (Tool calls need processing)")
+            return "tools"
         
         logger.info("├── Decision: END")
-        logger.info("└── Next Node: None (No further actions needed)")
+        logger.info("└── Next Node: END (Simple response, no tools needed)")
         return "end"
-    
-    def plan_node(state: AgentState):
-        """Create or execute the next step in the plan."""
-        logger.info("\n[NODE] Entering PLAN node")
-        
-        # Check for rate limit errors in recent messages
-        rate_limit_count = 0
-        for msg in reversed(state["messages"][-5:]):
-            if isinstance(msg, ToolMessage):
-                try:
-                    content = json.loads(msg.content)
-                    if isinstance(content, dict) and content.get('error') == 'Rate limit exceeded':
-                        rate_limit_count += 1
-                except:
-                    continue
-        
-        # If we've hit rate limits, stop planning and ask for help
-        if rate_limit_count > 0:
-            response = HumanMessage(content=
-                "I've hit rate limits while trying to execute the plan. Let me pause and ask: " +
-                "Would you like me to:\n" +
-                "1. Wait a moment and try again\n" +
-                "2. Try a different approach\n" +
-                "3. Focus on what we already know\n" +
-                "Please let me know how you'd like to proceed."
-            )
-            return {
-                **state,
-                "messages": state["messages"] + [response],
-                "autonomous_mode": False,
-                "planner_state": None  # Reset planner state to stop planning
-            }
-        
-        try:
-            if not state["planner_state"]:
-                # Initialize planner state
-                planner_state = create_initial_planner_state(state["messages"])
-                planner_state = create_plan(planner_state, model)
-                if not planner_state or not planner_state.get("plan"):
-                    # If plan creation failed, give control back to user
-                    response = HumanMessage(content=
-                        "I'm having trouble creating a plan to handle your request. " +
-                        "Could you please provide more details or clarify what you'd like me to do?"
-                    )
-                    return {
-                        **state,
-                        "messages": state["messages"] + [response],
-                        "autonomous_mode": False,
-                        "planner_state": None
-                    }
-                state["planner_state"] = planner_state
-                return state
-                
-            # Execute next step in plan
-            planner_state = execute_step(state["planner_state"], tools_by_name)
-            state["planner_state"] = planner_state
-            
-            # Update agent messages with planner messages
-            state["messages"].extend(planner_state["messages"])
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"Error in plan_node: {str(e)}")
-            response = HumanMessage(content=
-                "I encountered an error while trying to process your request. " +
-                "Could you please try rephrasing your question or providing more context?"
-            )
-            return {
-                **state,
-                "messages": state["messages"] + [response],
-                "autonomous_mode": False,
-                "planner_state": None
-            }
-    
-    def should_plan(state: AgentState):
-        """Determine if we should plan or use direct agent interaction."""
-        logger.info("\n[NODE] In AGENT node - Deciding whether to plan")
-        
-        # Get the last user message
-        last_user_message = None
-        for msg in reversed(state["messages"]):
-            if isinstance(msg, HumanMessage):
-                last_user_message = msg
-                break
-                
-        if not last_user_message:
-            return "agent"
-            
-        # Check if the message suggests a complex task needing planning
-        complex_indicators = [
-            "research",
-            "find information about",
-            "analyze",
-            "investigate",
-            "compare",
-            "summarize",
-            "gather data",
-            "collect information"
-        ]
-        
-        message_lower = last_user_message.content.lower()
-        needs_planning = any(indicator in message_lower for indicator in complex_indicators)
-        
-        if needs_planning:
-            logger.info("├── Decision: PLAN")
-            logger.info("└── Next Node: PLANNER (Complex task detected)")
-            return "plan"
-            
-        logger.info("├── Decision: DIRECT")
-        logger.info("└── Next Node: AGENT (Simple task)")
-        return "agent"
-    
-    def should_continue_planning(state: AgentState):
-        """Determine if we should continue with the plan or end."""
-        if not state["planner_state"]:
-            return "end"
-            
-        if state["planner_state"]["completed"]:
-            return "end"
-            
-        return "continue"
     
     workflow = StateGraph(AgentState)
     
     # Add nodes
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", tool_node)
-    workflow.add_node("plan", plan_node)
     
-    # Set entry point with conditional routing
+    # Set entry point
     workflow.set_entry_point("agent")
     
-    # Add edges for planning flow
+    # Add main routing logic
     workflow.add_conditional_edges(
         "agent",
-        should_plan,
+        route_agent,
         {
-            "plan": "plan",
-            "agent": "tools"
+            "tools": "tools",
+            "end": END
         }
     )
     
-    workflow.add_conditional_edges(
-        "plan",
-        should_continue_planning,
-        {
-            "continue": "plan",
-            "end": "agent"
-        }
-    )
-    
-    # Add existing edges
-    workflow.add_conditional_edges(
-        "agent",
-        should_continue,
-        {
-            "continue": "tools",
-            "end": END,
-        }
-    )
-    
+    # Tools always go back to agent for next decision
     workflow.add_edge("tools", "agent")
     
     return workflow.compile() 
