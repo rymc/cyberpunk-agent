@@ -217,6 +217,7 @@ def create_agent(llm_base_url: str, llm_api_key: str):
     tools_by_name = {tool.name: tool for tool in tools}
     
     def tool_node(state: AgentState):
+        logger.info("\n[NODE] Entering TOOLS node")
         try:
             if state["messages"][-1].tool_calls:
                 # llama only supports single tool calls
@@ -273,6 +274,7 @@ def create_agent(llm_base_url: str, llm_api_key: str):
         }
     
     def call_model(state: AgentState):
+        logger.info("\n[NODE] Entering AGENT node")
         try:
             system_prompt = SystemMessage(content="""⚠️ ABSOLUTE TOP PRIORITY - SOURCE URLs ARE MANDATORY ⚠️
 Every single response you make MUST include source URLs. If you don't have a source URL for a piece of information, DO NOT mention that information at all.
@@ -394,38 +396,34 @@ When multiple facts come from the same source, try to combine them into single, 
             }
     
     def should_continue(state: AgentState):
+        logger.info("\n[NODE] In AGENT node - Deciding next step")
         messages = state["messages"]
         last_message = messages[-1]
         
         has_tool_calls = bool(last_message.tool_calls)
         has_pending_urls = bool(state.get("autonomous_mode", False) and state.get("pending_urls", []))
         
-        # Check if the last message is asking for clarification
-        is_asking_clarification = any(phrase in last_message.content.lower() for phrase in [
-            "could you please clarify",
-            "could you specify",
-            "can you tell me more",
-            "what exactly",
-            "could you provide more details",
-            "i need more information",
-            "could you be more specific",
-            "what kind of",
-            "what type of",
-            "what aspects",
-            "which specific"
-        ])
-        
+        logger.info("[STATE CHECK] Current Agent State:")
+        logger.info(f"├── Autonomous Mode: {state.get('autonomous_mode', False)}")
+        logger.info(f"├── Pending URLs: {state.get('pending_urls', [])}")
+        logger.info(f"├── Has Tool Calls: {has_tool_calls}")
         if has_tool_calls:
-            print("Continuing due to tool call")
+            logger.info(f"│   └── Tool Calls: {last_message.tool_calls}")
+        logger.info(f"└── Last Message Type: {type(last_message).__name__}")
+        
+       
+        logger.info("[DECISION PROCESS]")
+        if has_tool_calls:
+            logger.info("├── Decision: CONTINUE")
+            logger.info("└── Next Node: TOOLS (Tool calls detected that need processing)")
             return "continue"
         elif has_pending_urls:
-            print(f"Continuing due to pending URLs: {state['pending_urls']}")
+            logger.info("├── Decision: CONTINUE")
+            logger.info(f"└── Next Node: TOOLS ({len(state['pending_urls'])} URLs remaining in queue)")
             return "continue"
-        elif is_asking_clarification:
-            print("Ending to wait for user clarification")
-            return "end"
         
-        print("Ending chain - no tool calls or pending URLs")
+        logger.info("├── Decision: END")
+        logger.info("└── Next Node: None (No further actions needed)")
         return "end"
     
     workflow = StateGraph(AgentState)
