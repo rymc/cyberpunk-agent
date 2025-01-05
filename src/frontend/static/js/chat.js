@@ -107,7 +107,7 @@ class ChatInterface {
 
     createNewAssistantMessage() {
         const msgDiv = document.createElement("div");
-        msgDiv.className = "message assistant";
+        msgDiv.className = "message assistant mb-4 whitespace-pre-wrap";
         msgDiv.id = "current-response";
         msgDiv.setAttribute('data-content', '');
         msgDiv.setAttribute('data-time', this.getTimestamp());
@@ -146,14 +146,21 @@ class ChatInterface {
 
     updateCurrentResponse(content) {
         if (this.currentMsg) {
-            const formattedContent = content
+            const existingContent = this.currentMsg.getAttribute('data-content') || '';
+            const newContent = existingContent + content;
+            
+            // Format the entire accumulated content
+            const formattedContent = newContent
                 .replace(/\[(\d{2}:\d{2}:\d{2})\]/g, '<span class="text-terminal-blue">[$1]</span>')
                 .replace(/^(ERROR:)/gm, '<span class="text-red-500">$1</span>')
                 .replace(/^(WARNING:)/gm, '<span class="text-yellow-500">$1</span>')
-                .replace(/^(SUCCESS:)/gm, '<span class="text-green-500">$1</span>');
+                .replace(/^(SUCCESS:)/gm, '<span class="text-green-500">$1</span>')
+                // Preserve consecutive newlines and add spacing
+                .replace(/\n\n/g, '<br><br>')
+                .replace(/\n/g, '<br>');
             
-            this.currentMsg.innerHTML = marked.parse(this.currentMsg.getAttribute('data-content') + formattedContent);
-            this.currentMsg.setAttribute('data-content', this.currentMsg.getAttribute('data-content') + content);
+            this.currentMsg.innerHTML = formattedContent;
+            this.currentMsg.setAttribute('data-content', newContent);
         }
     }
 
@@ -187,7 +194,7 @@ class ChatInterface {
 
     addUserMessage(message) {
         const userDiv = document.createElement("div");
-        userDiv.className = "message user";
+        userDiv.className = "message user mb-4";
         userDiv.setAttribute('data-time', this.getTimestamp());
         userDiv.textContent = message;
         this.messageCount++;
@@ -197,7 +204,7 @@ class ChatInterface {
 
     showError(message) {
         const errorDiv = document.createElement("div");
-        errorDiv.className = "message error";
+        errorDiv.className = "message error mb-4";
         errorDiv.style.color = "#ff0000";
         errorDiv.setAttribute('data-time', this.getTimestamp());
         errorDiv.textContent = `[CRITICAL ERROR] ${message}`;

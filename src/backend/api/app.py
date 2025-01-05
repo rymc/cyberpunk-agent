@@ -115,7 +115,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if rate_limiter.is_rate_limited(client):
                     await websocket.send_json({
                         "type": "error",
-                        "content": "Rate limit exceeded. Please wait a moment before sending more messages."
+                        "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] Rate limit exceeded. Please wait a moment before sending more messages."
                     })
                     continue
                 
@@ -128,7 +128,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if len(message) > 1000:  # Arbitrary limit
                     await websocket.send_json({
                         "type": "error",
-                        "content": "Message too long. Please keep messages under 1000 characters."
+                        "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] Message too long. Please keep messages under 1000 characters."
                     })
                     continue
                 
@@ -137,6 +137,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 
                 try:
                     assistant_response = ""
+                    is_first_chunk = True
                     inputs = create_initial_state(
                         conversation_history, 
                         autonomous=True
@@ -170,12 +171,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                     "tool_name": tool_name,
                                     "args": tool_args
                                 })
+                                is_first_chunk = True  # Reset for next message
                             elif message_chunk.content:
+                                chunk_content = message_chunk.content
+                                
+                                # Add newlines for new messages
+                                if is_first_chunk:
+                                    if assistant_response:
+                                        # Only add newlines between messages, not at the start
+                                        chunk_content = f"\n\n{chunk_content}"
+                                    is_first_chunk = False
+                                
                                 await websocket.send_json({
                                     "type": "stream",
-                                    "content": message_chunk.content
+                                    "content": chunk_content
                                 })
-                                assistant_response += message_chunk.content
+                                assistant_response += chunk_content
                         elif stream_type == "updates" and "agent" in content:
                             await websocket.send_json({
                                 "type": "tool_end"
@@ -190,14 +201,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     logger.error(f"Error processing message: {str(e)}", exc_info=True)
                     await websocket.send_json({
                         "type": "error",
-                        "content": "An error occurred while processing your message. Please try again."
+                        "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred while processing your message. Please try again."
                     })
             
             except Exception as e:
                 logger.error(f"Error in message loop: {str(e)}", exc_info=True)
                 await websocket.send_json({
                     "type": "error",
-                    "content": "An error occurred. Please try again."
+                    "content": f"\n[{datetime.now().strftime('%H:%M:%S')}] An error occurred. Please try again."
                 })
     
     except Exception as e:
