@@ -88,4 +88,3 @@ all configuration is handled through environment variables:
 - `host`: host to bind the server to
 - `port`: port to run the server on
 - `debug`: enable debug mode
-# cypherpunk-agent
