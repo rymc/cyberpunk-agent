@@ -14,35 +14,27 @@ class ChatInterface {
     async initializeChat() {
         try {
             const modelInfoResponse = await fetch('/api/models');
-            if (!modelInfoResponse.ok) {
-                throw new Error('Failed to fetch models');
-            }
-            const models = await modelInfoResponse.json();
+            if (!modelInfoResponse.ok) throw new Error('Failed to fetch models');
             
-            if (!Array.isArray(models) || models.length === 0) {
-                throw new Error("No models available");
-            }
+            const models = await modelInfoResponse.json();
+            if (!Array.isArray(models) || models.length === 0) throw new Error("No models available");
             
             const currentModel = models[0].id;
             UI_STRINGS.MODEL_INFO = `MODEL: ${currentModel}`;
             
+            const headerModel = document.getElementById('headerModel');
             if (models.length > 1) {
-                const headerModel = document.getElementById('headerModel');
                 headerModel.innerHTML = `MODEL: <select id="modelSelector" class="bg-transparent border-none text-terminal-green cursor-pointer">
-                    ${models.map(model => 
-                        `<option value="${model.id}" ${model.id === currentModel ? 'selected' : ''}>${model.id}</option>`
-                    ).join('')}
+                    ${models.map(model => `<option value="${model.id}" ${model.id === currentModel ? 'selected' : ''}>${model.id}</option>`).join('')}
                 </select>`;
                 
                 document.getElementById('modelSelector').addEventListener('change', (e) => {
                     UI_STRINGS.MODEL_INFO = `MODEL: ${e.target.value}`;
-                    if (this.ws) {
-                        this.ws.close();
-                    }
+                    if (this.ws) this.ws.close();
                     this.initializeWebSocket();
                 });
             } else {
-                document.getElementById('headerModel').textContent = UI_STRINGS.MODEL_INFO;
+                headerModel.textContent = UI_STRINGS.MODEL_INFO;
             }
             
             this.initializeWebSocket();
@@ -51,14 +43,7 @@ class ChatInterface {
             this.initializeUI();
         } catch (error) {
             console.error('Failed to initialize chat:', error);
-            const errorDiv = document.createElement("div");
-            errorDiv.className = "message error mb-4";
-            errorDiv.style.color = "#ff0000";
-            errorDiv.setAttribute('data-time', this.getTimestamp());
-            errorDiv.textContent = `${UI_STRINGS.PREFIX_ERROR}${error.message}`;
-            this.messageCount++;
-            this.messagesDiv.appendChild(errorDiv);
-            this.scrollToBottom();
+            this.showError(error.message);
         }
     }
 
@@ -67,132 +52,101 @@ class ChatInterface {
         const currentModel = modelSelector ? modelSelector.value : UI_STRINGS.MODEL_INFO.replace('MODEL: ', '');
         this.ws = new WebSocket(`ws://${window.location.host}/ws?model=${encodeURIComponent(currentModel)}`);
         this.ws.onmessage = this.handleWebSocketMessage.bind(this);
-        this.ws.onerror = this.handleWebSocketError.bind(this);
-        this.ws.onclose = this.handleWebSocketClose.bind(this);
+        this.ws.onerror = () => this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
+        this.ws.onclose = () => this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
     }
 
     initializeUI() {
-        // Initialize header
         document.getElementById('headerTitle').textContent = UI_STRINGS.APP_TITLE;
         document.getElementById('headerNodes').textContent = UI_STRINGS.METRIC_PRIMARY;
         document.getElementById('headerLearning').textContent = UI_STRINGS.STATUS_PRIMARY;
-        // Note: headerModel is now handled in initializeChat for the dropdown
-
-        // Initialize input and buttons
         this.userInput.placeholder = UI_STRINGS.INPUT_PLACEHOLDER;
         document.getElementById('executeButton').textContent = UI_STRINGS.BUTTON_SUBMIT;
         document.getElementById('cancelButton').textContent = UI_STRINGS.BUTTON_CANCEL;
 
-        // Initialize metric labels
-        document.getElementById('neuralMetricsTitle').textContent = UI_STRINGS.SECTION_HEADER_1;
-        document.getElementById('metricNodesLabel').textContent = UI_STRINGS.METRIC_1_LABEL;
-        document.getElementById('metricThroughputLabel').textContent = UI_STRINGS.METRIC_2_LABEL;
-        document.getElementById('metricBlocksLabel').textContent = UI_STRINGS.METRIC_3_LABEL;
+        const uiElements = {
+            'neuralMetricsTitle': UI_STRINGS.SECTION_HEADER_1,
+            'metricNodesLabel': UI_STRINGS.METRIC_1_LABEL,
+            'metricThroughputLabel': UI_STRINGS.METRIC_2_LABEL,
+            'metricBlocksLabel': UI_STRINGS.METRIC_3_LABEL,
+            'agentMetricsTitle': UI_STRINGS.SECTION_HEADER_2,
+            'metricQueriesLabel': UI_STRINGS.METRIC_4_LABEL,
+            'metricAccuracyLabel': UI_STRINGS.METRIC_5_LABEL,
+            'metricConsensusLabel': UI_STRINGS.METRIC_6_LABEL,
+            'activeProtocolsTitle': UI_STRINGS.SECTION_HEADER_3
+        };
 
-        document.getElementById('agentMetricsTitle').textContent = UI_STRINGS.SECTION_HEADER_2;
-        document.getElementById('metricQueriesLabel').textContent = UI_STRINGS.METRIC_4_LABEL;
-        document.getElementById('metricAccuracyLabel').textContent = UI_STRINGS.METRIC_5_LABEL;
-        document.getElementById('metricConsensusLabel').textContent = UI_STRINGS.METRIC_6_LABEL;
+        Object.entries(uiElements).forEach(([id, text]) => {
+            document.getElementById(id).textContent = text;
+        });
 
-        document.getElementById('activeProtocolsTitle').textContent = UI_STRINGS.SECTION_HEADER_3;
-        const protocolsList = document.getElementById('protocolsList');
-        protocolsList.innerHTML = `
+        document.getElementById('protocolsList').innerHTML = `
             <div>${UI_STRINGS.STATUS_ITEM_1}</div>
             <div>${UI_STRINGS.STATUS_ITEM_2}</div>
             <div>${UI_STRINGS.STATUS_ITEM_3}</div>
         `;
 
-        // Setup button event listeners
         document.getElementById('executeButton').onclick = () => this.sendMessage();
         document.getElementById('cancelButton').onclick = () => this.cancelRequest();
     }
 
     setupEventListeners() {
         this.userInput.addEventListener("keypress", (e) => {
-            if (e.key === "Enter") {
-                this.sendMessage();
-            }
+            if (e.key === "Enter") this.sendMessage();
         });
     }
 
     handleWebSocketMessage(event) {
         try {
             const data = JSON.parse(event.data);
-            switch (data.type) {
-                case "start_response":
+            const handlers = {
+                start_response: () => {
                     this.isProcessing = true;
                     this.cancelButton.classList.remove("hidden");
                     this.createNewAssistantMessage();
                     this.showThinking();
-                    break;
-                case "tool_start":
-                    let message;
-                    switch (data.tool_name) {
-                        case 'web_search':
-                            message = `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_SEARCHING}${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
-                            break;
-                        case 'parse_website':
-                            message = data.description || `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CONNECTING}`;
-                            break;
-                        default:
-                            message = data.description || `${UI_STRINGS.PREFIX_STATUS}${formatString(UI_STRINGS.STATUS_INITIALIZING, data.tool_name)}`;
-                    }
-                    this.updateLoadingStatus(message);
-                    break;
-                case "stream":
-                    if (this.currentMsg.querySelector('.loading-status')) {
-                        this.currentMsg.querySelector('.loading-status').remove();
-                    }
+                },
+                tool_start: () => {
+                    const messages = {
+                        web_search: `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_SEARCHING}${data.args?.query ? ` for: "${data.args.query}"` : "..."}`,
+                        parse_website: data.description || `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CONNECTING}`,
+                        default: data.description || `${UI_STRINGS.PREFIX_STATUS}${formatString(UI_STRINGS.STATUS_INITIALIZING, data.tool_name)}`
+                    };
+                    this.updateLoadingStatus(messages[data.tool_name] || messages.default);
+                },
+                stream: () => {
+                    this.currentMsg.querySelector('.loading-status')?.remove();
                     this.updateCurrentResponse(data.content);
-                    break;
-                case "tool_end":
-                    break;
-                case "end_response":
-                    if (this.currentMsg.querySelector('.loading-status')) {
-                        this.currentMsg.querySelector('.loading-status').remove();
-                    }
+                },
+                end_response: () => {
+                    this.currentMsg.querySelector('.loading-status')?.remove();
                     this.finalizeResponse();
                     this.userInput.disabled = false;
                     this.isProcessing = false;
                     this.cancelButton.classList.add("hidden");
-                    break;
-                default:
-                    console.warn(`${UI_STRINGS.ERROR_UNKNOWN}`, data.type);
-            }
+                }
+            };
+
+            handlers[data.type]?.();
             this.scrollToBottom();
         } catch (error) {
             console.error(`${UI_STRINGS.ERROR_SYSTEM} ${UI_STRINGS.ERROR_PROTOCOL}`, error);
         }
     }
 
-    handleWebSocketError(error) {
-        console.error(`${UI_STRINGS.PREFIX_ERROR}${UI_STRINGS.STATUS_ERROR_CONNECTION}`, error);
-        this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
-        this.userInput.disabled = false;
-    }
-
-    handleWebSocketClose() {
-        console.log(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_ERROR_TERMINATED}`);
-        this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
-        this.userInput.disabled = false;
-    }
-
     sendMessage() {
         const message = this.userInput.value.trim();
         if (!message) return;
 
-        this.addUserMessage(message);
-        this.ws.send(message);
-        this.userInput.value = "";
-    }
-
-    addUserMessage(message) {
         const userDiv = document.createElement("div");
         userDiv.className = "message user mb-4";
         userDiv.setAttribute('data-time', this.getTimestamp());
         userDiv.textContent = message;
         this.messageCount++;
         this.messagesDiv.appendChild(userDiv);
+        
+        this.ws.send(message);
+        this.userInput.value = "";
         this.scrollToBottom();
     }
 
@@ -220,20 +174,11 @@ class ChatInterface {
     }
 
     showThinking() {
-        const loadingDiv = this.createLoadingElement(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_PROCESSING}`);
-        this.currentMsg.appendChild(loadingDiv);
+        this.updateLoadingStatus(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_PROCESSING}`);
     }
 
     updateLoadingStatus(text) {
-        const oldStatus = this.currentMsg.querySelector('.loading-status');
-        if (oldStatus) {
-            oldStatus.remove();
-        }
-        const loadingDiv = this.createLoadingElement(text);
-        this.currentMsg.appendChild(loadingDiv);
-    }
-
-    createLoadingElement(text) {
+        this.currentMsg.querySelector('.loading-status')?.remove();
         const loadingDiv = document.createElement("div");
         loadingDiv.className = "loading-status flex items-center text-agent-blue";
         loadingDiv.innerHTML = `
@@ -243,7 +188,7 @@ class ChatInterface {
             </svg>
             <span>${text}</span>
         `;
-        return loadingDiv;
+        this.currentMsg.appendChild(loadingDiv);
     }
 
     updateCurrentResponse(content) {
@@ -274,9 +219,7 @@ class ChatInterface {
     cancelRequest() {
         if (!this.isProcessing) return;
         
-        if (this.ws) {
-            this.ws.close();
-        }
+        if (this.ws) this.ws.close();
 
         if (this.currentMsg) {
             this.currentMsg.querySelector('.loading-status')?.remove();
@@ -290,8 +233,6 @@ class ChatInterface {
         this.isProcessing = false;
         this.userInput.disabled = false;
         this.cancelButton.classList.add("hidden");
-
-        // Reconnect WebSocket with the current model
         this.initializeWebSocket();
     }
 
@@ -301,12 +242,10 @@ class ChatInterface {
     }
 
     scrollToBottom() {
-        const container = document.getElementById("messageContainer");
-        container.scrollTop = container.scrollHeight;
+        document.getElementById("messageContainer").scrollTop = document.getElementById("messageContainer").scrollHeight;
     }
 
     initializeMetricsUpdate() {
-        // Initialize metrics with random ranges
         this.metrics = {
             nodes: { min: 980, max: 1024, current: 1024 },
             throughput: { min: 82, max: 98, current: 87 },
@@ -315,67 +254,31 @@ class ChatInterface {
             accuracy: { min: 99.2, max: 99.9, current: 99.7 },
             consensus: { min: 97.8, max: 99.2, current: 98.2 }
         };
-
-        // Start periodic updates
         setInterval(() => this.updateMetrics(), 2000);
     }
 
     updateMetrics() {
-        // Update each metric with a new random value within its range
-        for (const [key, metric] of Object.entries(this.metrics)) {
-            const newValue = this.getNewMetricValue(metric);
+        Object.entries(this.metrics).forEach(([key, metric]) => {
+            const maxChange = (metric.max - metric.min) * 0.1;
+            let newValue = metric.current + (Math.random() - 0.5) * maxChange;
+            newValue = Math.max(metric.min, Math.min(metric.max, newValue));
+            
+            if (newValue >= 1000) newValue = Math.round(newValue);
+            else if (newValue >= 100) newValue = Math.round(newValue * 10) / 10;
+            else newValue = Math.round(newValue * 100) / 100;
+            
             metric.current = newValue;
             
-            // Find and update all corresponding elements
-            const elements = document.querySelectorAll(`[data-metric="${key}"]`);
-            elements.forEach(element => {
-                let displayValue = newValue;
+            document.querySelectorAll(`[data-metric="${key}"]`).forEach(element => {
+                element.textContent = key === 'nodes' ? formatString(UI_STRINGS.METRIC_1_FORMAT, newValue)
+                    : key === 'throughput' ? formatString(UI_STRINGS.METRIC_2_FORMAT, newValue)
+                    : ['blocks', 'queries'].includes(key) ? newValue.toLocaleString()
+                    : formatString(UI_STRINGS.METRIC_PERCENTAGE, newValue);
                 
-                // Format based on metric type
-                switch(key) {
-                    case 'nodes':
-                        element.textContent = formatString(UI_STRINGS.METRIC_1_FORMAT, displayValue);
-                        break;
-                    case 'throughput':
-                        element.textContent = formatString(UI_STRINGS.METRIC_2_FORMAT, displayValue);
-                        break;
-                    case 'blocks':
-                    case 'queries':
-                        element.textContent = displayValue.toLocaleString();
-                        break;
-                    case 'accuracy':
-                    case 'consensus':
-                        element.textContent = formatString(UI_STRINGS.METRIC_PERCENTAGE, displayValue);
-                        break;
-                }
-                
-                // Add a brief highlight effect
                 element.classList.add('value-update');
                 setTimeout(() => element.classList.remove('value-update'), 500);
             });
-        }
-    }
-
-    getNewMetricValue(metric) {
-        if (typeof metric.current === 'number') {
-            // Calculate a random change
-            const maxChange = (metric.max - metric.min) * 0.1;
-            const change = (Math.random() - 0.5) * maxChange;
-            
-            // Apply the change and ensure it stays within bounds
-            let newValue = metric.current + change;
-            newValue = Math.max(metric.min, Math.min(metric.max, newValue));
-            
-            // Round appropriately based on the current value's magnitude
-            if (newValue >= 1000) {
-                return Math.round(newValue);
-            } else if (newValue >= 100) {
-                return Math.round(newValue * 10) / 10;
-            } else {
-                return Math.round(newValue * 100) / 100;
-            }
-        }
-        return metric.current;
+        });
     }
 }
 
