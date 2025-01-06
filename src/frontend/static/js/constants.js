@@ -3,7 +3,7 @@ const UI_STRINGS = {
     APP_TITLE: 'AUTONOMOUS AGENT NETWORK',
     METRIC_PRIMARY: 'NODES:',
     STATUS_PRIMARY: 'LEARNING: ENABLED',
-    MODEL_INFO: 'MODEL: klusterai/Meta-Llama-3.1-405B-Instruct-Turbo',
+    MODEL_INFO: 'MODEL: Initializing...',
 
     // Input placeholders
     INPUT_PLACEHOLDER: 'initiate distributed query sequence...',

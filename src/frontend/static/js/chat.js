@@ -8,10 +8,67 @@ class ChatInterface {
         this.cancelButton = document.getElementById("cancelButton");
         this.isProcessing = false;
         this.messageCount = 0;
-        this.connectWebSocket();
-        this.setupEventListeners();
-        this.initializeMetricsUpdate();
-        this.initializeUI();
+        this.initializeChat();
+    }
+
+    async initializeChat() {
+        try {
+            const modelInfoResponse = await fetch('/api/models');
+            if (!modelInfoResponse.ok) {
+                throw new Error('Failed to fetch models');
+            }
+            const models = await modelInfoResponse.json();
+            
+            if (!Array.isArray(models) || models.length === 0) {
+                throw new Error("No models available");
+            }
+            
+            const currentModel = models[0].id;
+            UI_STRINGS.MODEL_INFO = `MODEL: ${currentModel}`;
+            
+            if (models.length > 1) {
+                const headerModel = document.getElementById('headerModel');
+                headerModel.innerHTML = `MODEL: <select id="modelSelector" class="bg-transparent border-none text-terminal-green cursor-pointer">
+                    ${models.map(model => 
+                        `<option value="${model.id}" ${model.id === currentModel ? 'selected' : ''}>${model.id}</option>`
+                    ).join('')}
+                </select>`;
+                
+                document.getElementById('modelSelector').addEventListener('change', (e) => {
+                    UI_STRINGS.MODEL_INFO = `MODEL: ${e.target.value}`;
+                    if (this.ws) {
+                        this.ws.close();
+                    }
+                    this.initializeWebSocket();
+                });
+            } else {
+                document.getElementById('headerModel').textContent = UI_STRINGS.MODEL_INFO;
+            }
+            
+            this.initializeWebSocket();
+            this.setupEventListeners();
+            this.initializeMetricsUpdate();
+            this.initializeUI();
+        } catch (error) {
+            console.error('Failed to initialize chat:', error);
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "message error mb-4";
+            errorDiv.style.color = "#ff0000";
+            errorDiv.setAttribute('data-time', this.getTimestamp());
+            errorDiv.textContent = `${UI_STRINGS.PREFIX_ERROR}${error.message}`;
+            this.messageCount++;
+            this.messagesDiv.appendChild(errorDiv);
+            this.scrollToBottom();
+        }
+    }
+
+    initializeWebSocket() {
+        const modelSelector = document.getElementById('modelSelector');
+        const currentModel = modelSelector ? modelSelector.value : UI_STRINGS.MODEL_INFO.replace('MODEL: ', '');
+        this.ws = new WebSocket(`ws://${window.location.host}/ws?model=${encodeURIComponent(currentModel)}`);
+        this.ws.onmessage = this.handleWebSocketMessage.bind(this);
+        this.ws.onerror = this.handleWebSocketError.bind(this);
+        this.ws.onclose = this.handleWebSocketClose.bind(this);
     }
 
     initializeUI() {
@@ -19,7 +76,7 @@ class ChatInterface {
         document.getElementById('headerTitle').textContent = UI_STRINGS.APP_TITLE;
         document.getElementById('headerNodes').textContent = UI_STRINGS.METRIC_PRIMARY;
         document.getElementById('headerLearning').textContent = UI_STRINGS.STATUS_PRIMARY;
-        document.getElementById('headerModel').textContent = UI_STRINGS.MODEL_INFO;
+        // Note: headerModel is now handled in initializeChat for the dropdown
 
         // Initialize input and buttons
         this.userInput.placeholder = UI_STRINGS.INPUT_PLACEHOLDER;
@@ -48,13 +105,6 @@ class ChatInterface {
         // Setup button event listeners
         document.getElementById('executeButton').onclick = () => this.sendMessage();
         document.getElementById('cancelButton').onclick = () => this.cancelRequest();
-    }
-
-    connectWebSocket() {
-        this.ws = new WebSocket(`ws://${window.location.host}/ws`);
-        this.ws.onmessage = this.handleWebSocketMessage.bind(this);
-        this.ws.onerror = this.handleWebSocketError.bind(this);
-        this.ws.onclose = this.handleWebSocketClose.bind(this);
     }
 
     setupEventListeners() {
@@ -115,32 +165,46 @@ class ChatInterface {
         }
     }
 
-    cancelRequest() {
-        if (!this.isProcessing) return;
-        
-        if (this.ws) {
-            this.ws.close();
-        }
-
-        if (this.currentMsg) {
-            this.currentMsg.querySelector('.loading-status')?.remove();
-            const cancelDiv = document.createElement("div");
-            cancelDiv.className = "text-error-red text-sm mt-2";
-            cancelDiv.textContent = `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CANCELLED}`;
-            this.currentMsg.appendChild(cancelDiv);
-            this.finalizeResponse();
-        }
-
-        this.isProcessing = false;
+    handleWebSocketError(error) {
+        console.error(`${UI_STRINGS.PREFIX_ERROR}${UI_STRINGS.STATUS_ERROR_CONNECTION}`, error);
+        this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
         this.userInput.disabled = false;
-        this.cancelButton.classList.add("hidden");
-
-        this.connectWebSocket();
     }
 
-    getTimestamp() {
-        const now = new Date();
-        return `[${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}]`;
+    handleWebSocketClose() {
+        console.log(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_ERROR_TERMINATED}`);
+        this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
+        this.userInput.disabled = false;
+    }
+
+    sendMessage() {
+        const message = this.userInput.value.trim();
+        if (!message) return;
+
+        this.addUserMessage(message);
+        this.ws.send(message);
+        this.userInput.value = "";
+    }
+
+    addUserMessage(message) {
+        const userDiv = document.createElement("div");
+        userDiv.className = "message user mb-4";
+        userDiv.setAttribute('data-time', this.getTimestamp());
+        userDiv.textContent = message;
+        this.messageCount++;
+        this.messagesDiv.appendChild(userDiv);
+        this.scrollToBottom();
+    }
+
+    showError(message) {
+        const errorDiv = document.createElement("div");
+        errorDiv.className = "message error mb-4";
+        errorDiv.style.color = "#ff0000";
+        errorDiv.setAttribute('data-time', this.getTimestamp());
+        errorDiv.textContent = `${UI_STRINGS.PREFIX_ERROR}${message}`;
+        this.messageCount++;
+        this.messagesDiv.appendChild(errorDiv);
+        this.scrollToBottom();
     }
 
     createNewAssistantMessage() {
@@ -207,46 +271,33 @@ class ChatInterface {
         }
     }
 
-    handleWebSocketError(error) {
-        console.error(`${UI_STRINGS.PREFIX_ERROR}${UI_STRINGS.STATUS_ERROR_CONNECTION}`, error);
-        this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
+    cancelRequest() {
+        if (!this.isProcessing) return;
+        
+        if (this.ws) {
+            this.ws.close();
+        }
+
+        if (this.currentMsg) {
+            this.currentMsg.querySelector('.loading-status')?.remove();
+            const cancelDiv = document.createElement("div");
+            cancelDiv.className = "text-error-red text-sm mt-2";
+            cancelDiv.textContent = `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CANCELLED}`;
+            this.currentMsg.appendChild(cancelDiv);
+            this.finalizeResponse();
+        }
+
+        this.isProcessing = false;
         this.userInput.disabled = false;
+        this.cancelButton.classList.add("hidden");
+
+        // Reconnect WebSocket with the current model
+        this.initializeWebSocket();
     }
 
-    handleWebSocketClose() {
-        console.log(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_ERROR_TERMINATED}`);
-        this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
-        this.userInput.disabled = false;
-    }
-
-    sendMessage() {
-        const message = this.userInput.value.trim();
-        if (!message) return;
-
-        this.addUserMessage(message);
-        this.ws.send(message);
-        this.userInput.value = "";
-    }
-
-    addUserMessage(message) {
-        const userDiv = document.createElement("div");
-        userDiv.className = "message user mb-4";
-        userDiv.setAttribute('data-time', this.getTimestamp());
-        userDiv.textContent = message;
-        this.messageCount++;
-        this.messagesDiv.appendChild(userDiv);
-        this.scrollToBottom();
-    }
-
-    showError(message) {
-        const errorDiv = document.createElement("div");
-        errorDiv.className = "message error mb-4";
-        errorDiv.style.color = "#ff0000";
-        errorDiv.setAttribute('data-time', this.getTimestamp());
-        errorDiv.textContent = `${UI_STRINGS.PREFIX_ERROR}${message}`;
-        this.messageCount++;
-        this.messagesDiv.appendChild(errorDiv);
-        this.scrollToBottom();
+    getTimestamp() {
+        const now = new Date();
+        return `[${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}]`;
     }
 
     scrollToBottom() {

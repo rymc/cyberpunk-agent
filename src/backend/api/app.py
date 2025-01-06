@@ -11,9 +11,10 @@ from pathlib import Path
 import json
 import time
 from datetime import datetime, timedelta
+import requests
 
 from ..config.settings import get_settings
-from ..core.agent import create_agent, create_initial_state
+from ..core.agent import create_agent, create_initial_state, get_available_models
 from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 
 # Configure logging
@@ -94,6 +95,38 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+@app.get("/api/env")
+async def get_env():
+    """Get environment configuration."""
+    settings = get_settings()
+    return {
+        "llm_base_url": settings.llm_base_url,
+        "llm_api_key": settings.llm_api_key
+    }
+
+@app.get("/api/models")
+async def get_models():
+    settings = get_settings()
+    try:
+        response = requests.get(
+            f"{settings.llm_base_url}/models",
+            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+            verify=False
+        )
+        response.raise_for_status()
+        models_response = response.json()
+        
+        if isinstance(models_response, dict) and models_response.get('object') == 'list':
+            return [{"id": model["id"]} for model in models_response.get('data', [])]
+            
+        if isinstance(models_response, list):
+            return [{"id": model.get("id")} for model in models_response if model.get("id")]
+            
+        return []
+    except Exception as e:
+        logger.error(f"Failed to fetch models: {e}")
+        return []
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -102,9 +135,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         client = websocket.client.host
         conversation_history: List[BaseMessage] = []
         
+        # Get the selected model from the query parameters
+        params = dict(websocket.query_params)
+        model_name = params.get("model")
+        
         graph = create_agent(
             llm_base_url=settings.llm_base_url,
-            llm_api_key=settings.llm_api_key
+            llm_api_key=settings.llm_api_key,
+            model_name=model_name  # Pass the selected model
         )
         
         while True:

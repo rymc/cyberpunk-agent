@@ -250,12 +250,45 @@ def create_initial_state(messages: list[BaseMessage], autonomous: bool = False) 
         "autonomous_mode": autonomous
     }
 
-def create_agent(llm_base_url: str, llm_api_key: str):
+def get_available_models(base_url: str, api_key: str) -> str:
+    """Fetch available models from the LLM API."""
+    try:
+        response = requests.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"}
+        )
+        response.raise_for_status()
+        models_response = response.json()
+        
+        # Handle OpenAI format response
+        if isinstance(models_response, dict) and models_response.get('object') == 'list':
+            models = models_response.get('data', [])
+        else:
+            models = models_response if isinstance(models_response, list) else []
+            
+        # Get first available model
+        if models and len(models) > 0 and isinstance(models[0], dict) and 'id' in models[0]:
+            return models[0]['id']
+        
+        logger.warning("No models found in API response")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch models from API: {e}")
+        return None
+
+def create_agent(llm_base_url: str, llm_api_key: str, model_name: str = None):
     """Create an agent with web search and parsing capabilities."""
+    if not model_name:
+        model_name = get_available_models(llm_base_url, llm_api_key)
+    if not model_name:
+        raise ValueError("No model available from the API")
+        
+    logger.info(f"Using model: {model_name}")
+    
     model = ChatOpenAI(
         base_url=llm_base_url,
         api_key=llm_api_key,
-        model="klusterai/Meta-Llama-3.1-405B-Instruct-Turbo",
+        model=model_name,
         streaming=True
     )
     
