@@ -30,11 +30,11 @@
     <div class="container mx-auto p-6 max-w-6xl">
         <header class="mb-8">
             <div class="border border-agent-blue p-4 text-center relative overflow-hidden">
-                <h1 class="text-2xl text-agent-blue font-bold mb-2">AUTONOMOUS AGENT NETWORK</h1>
+                <h1 class="text-2xl text-agent-blue font-bold mb-2" id="headerTitle"></h1>
                 <div class="text-xs text-agent-blue opacity-70 flex items-center justify-center gap-4">
-                    <span>[NODES: <span data-metric="nodes">1,024/1,024 ACTIVE</span>]</span>
-                    <span>[LEARNING: ENABLED]</span>
-                    <span>[MODEL: klusterai/Meta-Llama-3.1-405B-Instruct-Turbo]</span>
+                    <span>[<span id="headerNodes"></span> <span data-metric="nodes">1,024/1,024 ACTIVE</span>]</span>
+                    <span id="headerLearning"></span>
+                    <span id="headerModel"></span>
                 </div>
             </div>
         </header>
@@ -48,65 +48,60 @@
                 <span class="text-agent-blue opacity-70">command://</span>
                 <input type="text" id="userInput" 
                     class="flex-1 p-4 bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-agent-blue text-agent-blue font-mono placeholder-text-secondary placeholder-opacity-50"
-                    placeholder="initiate distributed query sequence..."
                     spellcheck="false">
-                <button onclick="window.chatInterface.sendMessage()" 
+                <button id="executeButton"
                     class="bg-transparent border border-agent-blue text-agent-blue px-6 py-4 hover:bg-agent-blue hover:bg-opacity-10 focus:outline-none focus:ring-1 focus:ring-agent-blue transition-colors duration-200 font-mono">
-                    EXECUTE
                 </button>
-                <button id="cancelButton" onclick="window.chatInterface.cancelRequest()" 
+                <button id="cancelButton"
                     class="hidden bg-transparent border border-error-red text-error-red px-6 py-4 hover:bg-error-red hover:bg-opacity-10 focus:outline-none focus:ring-1 focus:ring-error-red transition-colors duration-200 font-mono">
-                    HALT
                 </button>
             </div>
         </div>
 
         <div class="grid grid-cols-3 gap-4 text-xs">
             <div class="border border-agent-blue p-2">
-                <div class="text-agent-blue opacity-70">NEURAL METRICS</div>
+                <div class="text-agent-blue opacity-70" id="neuralMetricsTitle"></div>
                 <div class="text-agent-blue mt-1">
                     <div class="flex justify-between">
-                        <span>NODES</span>
+                        <span id="metricNodesLabel"></span>
                         <span class="text-agent-highlight" data-metric="nodes">1,024/1,024 ACTIVE</span>
                     </div>
                     <div class="flex justify-between">
-                        <span>THROUGHPUT</span>
+                        <span id="metricThroughputLabel"></span>
                         <span class="text-agent-highlight" data-metric="throughput">87% OPTIMAL</span>
                     </div>
                     <div class="flex justify-between">
-                        <span>BLOCKS</span>
+                        <span id="metricBlocksLabel"></span>
                         <span class="text-agent-highlight" data-metric="blocks">847,231</span>
                     </div>
                 </div>
             </div>
             <div class="border border-agent-blue p-2">
-                <div class="text-agent-blue opacity-70">AGENT METRICS</div>
+                <div class="text-agent-blue opacity-70" id="agentMetricsTitle"></div>
                 <div class="text-agent-blue mt-1">
                     <div class="flex justify-between">
-                        <span>ACTIVE QUERIES</span>
+                        <span id="metricQueriesLabel"></span>
                         <span class="text-agent-highlight" data-metric="queries">2,847</span>
                     </div>
                     <div class="flex justify-between">
-                        <span>ACCURACY</span>
+                        <span id="metricAccuracyLabel"></span>
                         <span class="text-agent-highlight" data-metric="accuracy">99.7%</span>
                     </div>
                     <div class="flex justify-between">
-                        <span>CONSENSUS</span>
+                        <span id="metricConsensusLabel"></span>
                         <span class="text-agent-highlight" data-metric="consensus">98.2%</span>
                     </div>
                 </div>
             </div>
             <div class="border border-agent-blue p-2">
-                <div class="text-agent-blue opacity-70">ACTIVE PROTOCOLS</div>
-                <div class="text-agent-blue mt-1">
-                    <div>[ DISTRIBUTED INFERENCE ]</div>
-                    <div>[ PROOF OF INFERENCE ]</div>
-                    <div>[ TURBO MODE ]</div>
+                <div class="text-agent-blue opacity-70" id="activeProtocolsTitle"></div>
+                <div class="text-agent-blue mt-1" id="protocolsList">
                 </div>
             </div>
         </div>
     </div>
+    <script src="/static/js/constants.js" type="module"></script>
     <script src="/static/css/main.css"></script>
-    <script src="/static/js/chat.js"></script>
+    <script src="/static/js/chat.js" type="module"></script>
 </body>
 </html> 

@@ -1,3 +1,5 @@
+import { UI_STRINGS, formatString } from './constants.js';
+
 class ChatInterface {
     constructor() {
         this.ws = null;
@@ -9,6 +11,43 @@ class ChatInterface {
         this.connectWebSocket();
         this.setupEventListeners();
         this.initializeMetricsUpdate();
+        this.initializeUI();
+    }
+
+    initializeUI() {
+        // Initialize header
+        document.getElementById('headerTitle').textContent = UI_STRINGS.APP_TITLE;
+        document.getElementById('headerNodes').textContent = UI_STRINGS.METRIC_PRIMARY;
+        document.getElementById('headerLearning').textContent = UI_STRINGS.STATUS_PRIMARY;
+        document.getElementById('headerModel').textContent = UI_STRINGS.MODEL_INFO;
+
+        // Initialize input and buttons
+        this.userInput.placeholder = UI_STRINGS.INPUT_PLACEHOLDER;
+        document.getElementById('executeButton').textContent = UI_STRINGS.BUTTON_SUBMIT;
+        document.getElementById('cancelButton').textContent = UI_STRINGS.BUTTON_CANCEL;
+
+        // Initialize metric labels
+        document.getElementById('neuralMetricsTitle').textContent = UI_STRINGS.SECTION_HEADER_1;
+        document.getElementById('metricNodesLabel').textContent = UI_STRINGS.METRIC_1_LABEL;
+        document.getElementById('metricThroughputLabel').textContent = UI_STRINGS.METRIC_2_LABEL;
+        document.getElementById('metricBlocksLabel').textContent = UI_STRINGS.METRIC_3_LABEL;
+
+        document.getElementById('agentMetricsTitle').textContent = UI_STRINGS.SECTION_HEADER_2;
+        document.getElementById('metricQueriesLabel').textContent = UI_STRINGS.METRIC_4_LABEL;
+        document.getElementById('metricAccuracyLabel').textContent = UI_STRINGS.METRIC_5_LABEL;
+        document.getElementById('metricConsensusLabel').textContent = UI_STRINGS.METRIC_6_LABEL;
+
+        document.getElementById('activeProtocolsTitle').textContent = UI_STRINGS.SECTION_HEADER_3;
+        const protocolsList = document.getElementById('protocolsList');
+        protocolsList.innerHTML = `
+            <div>${UI_STRINGS.STATUS_ITEM_1}</div>
+            <div>${UI_STRINGS.STATUS_ITEM_2}</div>
+            <div>${UI_STRINGS.STATUS_ITEM_3}</div>
+        `;
+
+        // Setup button event listeners
+        document.getElementById('executeButton').onclick = () => this.sendMessage();
+        document.getElementById('cancelButton').onclick = () => this.cancelRequest();
     }
 
     connectWebSocket() {
@@ -40,13 +79,13 @@ class ChatInterface {
                     let message;
                     switch (data.tool_name) {
                         case 'web_search':
-                            message = `[NETGRID] >> infiltrating global datastreams${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
+                            message = `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_SEARCHING}${data.args?.query ? ` for: "${data.args.query}"` : "..."}`;
                             break;
                         case 'parse_website':
-                            message = data.description || "[NETGRID] >> establishing neural link...";
+                            message = data.description || `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CONNECTING}`;
                             break;
                         default:
-                            message = data.description || `[NETGRID] >> initializing ${data.tool_name} protocol...`;
+                            message = data.description || `${UI_STRINGS.PREFIX_STATUS}${formatString(UI_STRINGS.STATUS_INITIALIZING, data.tool_name)}`;
                     }
                     this.updateLoadingStatus(message);
                     break;
@@ -68,11 +107,11 @@ class ChatInterface {
                     this.cancelButton.classList.add("hidden");
                     break;
                 default:
-                    console.warn("[ALERT] unknown protocol detected:", data.type);
+                    console.warn(`${UI_STRINGS.ERROR_UNKNOWN}`, data.type);
             }
             this.scrollToBottom();
         } catch (error) {
-            console.error("[SYSTEM FAILURE] protocol error:", error);
+            console.error(`${UI_STRINGS.ERROR_SYSTEM} ${UI_STRINGS.ERROR_PROTOCOL}`, error);
         }
     }
 
@@ -87,7 +126,7 @@ class ChatInterface {
             this.currentMsg.querySelector('.loading-status')?.remove();
             const cancelDiv = document.createElement("div");
             cancelDiv.className = "text-error-red text-sm mt-2";
-            cancelDiv.textContent = ">> protocol execution terminated. neural link severed.";
+            cancelDiv.textContent = `${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_CANCELLED}`;
             this.currentMsg.appendChild(cancelDiv);
             this.finalizeResponse();
         }
@@ -117,7 +156,7 @@ class ChatInterface {
     }
 
     showThinking() {
-        const loadingDiv = this.createLoadingElement("[NETGRID] >> neural processors engaged. synthesizing response...");
+        const loadingDiv = this.createLoadingElement(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_PROCESSING}`);
         this.currentMsg.appendChild(loadingDiv);
     }
 
@@ -169,14 +208,14 @@ class ChatInterface {
     }
 
     handleWebSocketError(error) {
-        console.error("[CRITICAL] neural interface failure:", error);
-        this.showError(">> neural interface disrupted. critical systems compromised. initiate manual refresh sequence.");
+        console.error(`${UI_STRINGS.PREFIX_ERROR}${UI_STRINGS.STATUS_ERROR_CONNECTION}`, error);
+        this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
         this.userInput.disabled = false;
     }
 
     handleWebSocketClose() {
-        console.log("[ALERT] neural link terminated");
-        this.showError(">> neural link terminated. connection matrix destabilized. initiate manual refresh sequence.");
+        console.log(`${UI_STRINGS.PREFIX_STATUS}${UI_STRINGS.STATUS_ERROR_TERMINATED}`);
+        this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
         this.userInput.disabled = false;
     }
 
@@ -204,7 +243,7 @@ class ChatInterface {
         errorDiv.className = "message error mb-4";
         errorDiv.style.color = "#ff0000";
         errorDiv.setAttribute('data-time', this.getTimestamp());
-        errorDiv.textContent = `[CRITICAL ERROR] ${message}`;
+        errorDiv.textContent = `${UI_STRINGS.PREFIX_ERROR}${message}`;
         this.messageCount++;
         this.messagesDiv.appendChild(errorDiv);
         this.scrollToBottom();
@@ -244,20 +283,18 @@ class ChatInterface {
                 // Format based on metric type
                 switch(key) {
                     case 'nodes':
-                        element.textContent = `${displayValue}/1,024 ACTIVE`;
+                        element.textContent = formatString(UI_STRINGS.METRIC_1_FORMAT, displayValue);
                         break;
                     case 'throughput':
-                        element.textContent = `${displayValue}% OPTIMAL`;
+                        element.textContent = formatString(UI_STRINGS.METRIC_2_FORMAT, displayValue);
                         break;
                     case 'blocks':
-                        element.textContent = displayValue.toLocaleString();
-                        break;
                     case 'queries':
                         element.textContent = displayValue.toLocaleString();
                         break;
                     case 'accuracy':
                     case 'consensus':
-                        element.textContent = `${displayValue}%`;
+                        element.textContent = formatString(UI_STRINGS.METRIC_PERCENTAGE, displayValue);
                         break;
                 }
                 
