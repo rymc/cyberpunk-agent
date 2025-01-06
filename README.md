@@ -1,5 +1,6 @@
-# research agent demo web app
+# cyberpunk researcher 
 
+![screenshot](screenshot.png)
 
 ## features
 
