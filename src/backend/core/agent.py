@@ -12,18 +12,12 @@ import os
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tavily import TavilyClient
-from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 LOGS_DIR = Path("logs/llm_requests")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-load_dotenv()
-
 
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
@@ -250,38 +244,10 @@ def create_initial_state(messages: list[BaseMessage], autonomous: bool = False) 
         "autonomous_mode": autonomous
     }
 
-def get_available_models(base_url: str, api_key: str) -> str:
-    """Fetch available models from the LLM API."""
-    try:
-        response = requests.get(
-            f"{base_url}/models",
-            headers={"Authorization": f"Bearer {api_key}"}
-        )
-        response.raise_for_status()
-        models_response = response.json()
-        
-        # Handle OpenAI format response
-        if isinstance(models_response, dict) and models_response.get('object') == 'list':
-            models = models_response.get('data', [])
-        else:
-            models = models_response if isinstance(models_response, list) else []
-            
-        # Get first available model
-        if models and len(models) > 0 and isinstance(models[0], dict) and 'id' in models[0]:
-            return models[0]['id']
-        
-        logger.warning("No models found in API response")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to fetch models from API: {e}")
-        return None
-
 def create_agent(llm_base_url: str, llm_api_key: str, model_name: str = None):
     """Create an agent with web search and parsing capabilities."""
     if not model_name:
-        model_name = get_available_models(llm_base_url, llm_api_key)
-    if not model_name:
-        raise ValueError("No model available from the API")
+        raise ValueError("Model name is required")
         
     logger.info(f"Using model: {model_name}")
     

@@ -125,7 +125,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         client = websocket.client.host
         conversation_history: List[BaseMessage] = []
         params = dict(websocket.query_params)
+        
+        models = await get_models()
+        if not models:
+            await websocket.close(code=1008, reason="No models available")
+            return
+            
         model_name = params.get("model")
+        if not model_name or not any(m["id"] == model_name for m in models):
+            model_name = models[0]["id"]
         
         graph = create_agent(
             llm_base_url=settings.llm_base_url,
@@ -213,7 +221,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if assistant_response:
                             conversation_history.append(HumanMessage(content=assistant_response))
                 except Exception as e:
-                    logger.error(f"Stream error: {str(e)}")
+                    logger.error(f"Stream error: {e}")
                     if websocket in active_connections:
                         await websocket.send_json({
                             "type": "error",
@@ -221,10 +229,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         })
                         
             except WebSocketDisconnect:
-                logger.info(f"WebSocket disconnected for client {client}")
                 break
             except Exception as e:
-                logger.error(f"Message handling error: {str(e)}")
+                logger.error(f"Message handling error: {e}")
                 if websocket in active_connections:
                     await websocket.send_json({
                         "type": "error",
@@ -232,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     })
     
     except Exception as e:
-        logger.error(f"WebSocket error for client {websocket.client.host}: {str(e)}")
+        logger.error(f"WebSocket error: {e}")
     finally:
         active_connections.discard(websocket)
         try:

@@ -2,6 +2,28 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import List
 import json
+from pathlib import Path
+from dotenv import load_dotenv
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+env_path = Path(__file__).parent.parent.parent.parent / '.env'
+logger.info(f"Loading environment variables from: {env_path}")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Environment file exists: {env_path.exists()}")
+if env_path.exists():
+    logger.info(f"Environment file contents:")
+    with open(env_path) as f:
+        logger.info(f.read())
+
+load_dotenv(dotenv_path=env_path, override=True)
+
+# Log all environment variables starting with AGENT
+for key, value in os.environ.items():
+    if key.startswith('AGENT_'):
+        logger.info(f"Environment variable {key}: {value}")
 
 class Settings(BaseSettings):
     """Application settings."""
@@ -34,8 +56,13 @@ class Settings(BaseSettings):
             if field_name == "cors_origins":
                 return json.loads(raw_val)
             return raw_val
+            
+    class Config:
+        env_prefix = "AGENT_"
 
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings() 
+    settings = Settings()
+    logger.info(f"Loaded settings with LLM_BASE_URL: {settings.llm_base_url}")
+    return settings 

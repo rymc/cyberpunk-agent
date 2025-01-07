@@ -50,7 +50,11 @@ class ChatInterface {
     initializeWebSocket() {
         const modelSelector = document.getElementById('modelSelector');
         const currentModel = modelSelector ? modelSelector.value : UI_STRINGS.MODEL_INFO.replace('MODEL: ', '');
-        this.ws = new WebSocket(`ws://${window.location.host}/ws?model=${encodeURIComponent(currentModel)}`);
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+        const wsUrlWithModel = currentModel ? `${wsUrl}?model=${encodeURIComponent(currentModel)}` : wsUrl;
+        
+        this.ws = new WebSocket(wsUrlWithModel);
         this.ws.onmessage = this.handleWebSocketMessage.bind(this);
         this.ws.onerror = () => this.showError(UI_STRINGS.STATUS_ERROR_CONNECTION);
         this.ws.onclose = () => this.showError(UI_STRINGS.STATUS_ERROR_TERMINATED);
