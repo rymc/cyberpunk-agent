@@ -12,6 +12,7 @@ import os
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tavily import TavilyClient
+from ..config.settings import get_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
 LOGS_DIR = Path("logs/llm_requests")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+settings = get_settings()
+tavily_client = TavilyClient(api_key=settings.tavily_api_key)
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, HumanMessage, AIMessage
