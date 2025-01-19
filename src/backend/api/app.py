@@ -99,8 +99,7 @@ async def get_models():
     try:
         response = requests.get(
             f"{settings.llm_base_url}/models",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            verify=False
+            headers={"Authorization": f"Bearer {settings.llm_api_key}"}
         )
         response.raise_for_status()
         models_response = response.json()
